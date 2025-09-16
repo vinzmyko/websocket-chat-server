@@ -13,25 +13,29 @@ use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use names::Generator;
 use tokio::{net::TcpListener, sync::mpsc};
-
-use client::ConnectedClient;
 use uuid::Uuid;
 
-use crate::client::ChatMessage;
-
-mod client;
+pub struct ConnectedClient {
+    pub user_name: String,
+    pub sender: mpsc::UnboundedSender<Message>,
+}
 
 #[tokio::main]
 async fn main() {
+    // create the sharded hashmap<string, ConnectedClient> for async
     let clients = Arc::new(DashMap::new());
 
+    // handles how ip address endpoints map to our code
     let app = Router::new()
         .route("/ws", get(handle_websocket))
         .with_state(clients);
 
-    let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
-    println!("Server running on http://0.0.0.0:3000");
+    // tracks traffic from specific ip address
+    let ip = "0.0.0.0:3000";
+    let listener = TcpListener::bind(ip).await.unwrap();
+    println!("Server running on http://{}", ip);
 
+    // connects the server and the listener
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -44,6 +48,7 @@ async fn handle_websocket(
     let mut generator = Generator::default();
     let user_name = generator.next().unwrap();
 
+    // upgrades http connection and forwards connection to bespoke websocket connection
     ws.on_upgrade(move |socket| handle_connection(socket, clients, user_name))
 }
 
@@ -72,6 +77,7 @@ async fn handle_connection(
         println!("Cannot send to {} Error: {}", user_name, e);
     };
 
+    // create background worker task for tracking traffic to the channel
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             if sender.send(msg).await.is_err() {
@@ -82,11 +88,6 @@ async fn handle_connection(
 
     while let Some(msg) = receiver.next().await {
         if let Ok(Message::Text(text)) = msg {
-            // let chat_message = ChatMessage {
-            //     user_name: user_name.clone(),
-            //     content: text,
-            // };
-
             let m = format!("{}: {}", user_name, text);
 
             let serialised_data = rmp_serde::to_vec(&m).unwrap();

@@ -1,9 +1,33 @@
-use axum::{Router, response::Html, routing::get};
-use tokio::net::TcpListener;
+use std::sync::Arc;
+
+use axum::{
+    Router,
+    extract::{
+        State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
+    response::IntoResponse,
+    routing::get,
+};
+use dashmap::DashMap;
+use futures_util::{SinkExt, StreamExt};
+use names::Generator;
+use tokio::{net::TcpListener, sync::mpsc};
+
+use client::ConnectedClient;
+use uuid::Uuid;
+
+use crate::client::ChatMessage;
+
+mod client;
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new().route("/", get(hello_handler));
+    let clients = Arc::new(DashMap::new());
+
+    let app = Router::new()
+        .route("/ws", get(handle_websocket))
+        .with_state(clients);
 
     let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("Server running on http://0.0.0.0:3000");
@@ -11,7 +35,81 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn hello_handler() -> Html<&'static str> {
-    println!("Client requested at endpoint '/', sending response.");
-    Html("<h1>Hello WebSocket Server</h1>")
+async fn handle_websocket(
+    ws: WebSocketUpgrade,
+    State(clients): State<Arc<DashMap<Uuid, ConnectedClient>>>,
+) -> impl IntoResponse {
+    println!("WebSocket upgrade requested");
+
+    let mut generator = Generator::default();
+    let user_name = generator.next().unwrap();
+
+    ws.on_upgrade(move |socket| handle_connection(socket, clients, user_name))
+}
+
+async fn handle_connection(
+    ws: WebSocket,
+    clients: Arc<DashMap<Uuid, ConnectedClient>>,
+    user_name: String,
+) {
+    println!("WebSocket connection established");
+    let client_id = Uuid::new_v4();
+
+    let (mut sender, mut receiver) = ws.split();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+
+    clients.insert(
+        client_id,
+        ConnectedClient {
+            user_name: user_name.clone(),
+            sender: tx,
+        },
+    );
+
+    let welcome_msg = format!("Welcome to chat, {}! You are now connected.", user_name);
+    let welcome_message = Message::Text(welcome_msg);
+    if let Err(e) = sender.send(welcome_message).await {
+        println!("Cannot send to {} Error: {}", user_name, e);
+    };
+
+    tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            if sender.send(msg).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    while let Some(msg) = receiver.next().await {
+        if let Ok(Message::Text(text)) = msg {
+            // let chat_message = ChatMessage {
+            //     user_name: user_name.clone(),
+            //     content: text,
+            // };
+
+            let m = format!("{}: {}", user_name, text);
+
+            let serialised_data = rmp_serde::to_vec(&m).unwrap();
+
+            // now we can loop over the clients
+            for entry in clients.iter() {
+                let id = entry.key();
+                let client = entry.value();
+
+                // create the guard clause
+                if *id == client_id {
+                    continue;
+                }
+
+                // need to clone it because we are sending the same data to multiple clients
+                let message = Message::Binary(serialised_data.clone());
+                // we need to send over the message to the channel
+                if let Err(e) = client.sender.send(message) {
+                    println!("Cannot send to {} Error: {}", client.user_name, e);
+                }
+            }
+        }
+    }
+
+    clients.remove(&client_id);
 }

@@ -31,9 +31,9 @@ async fn main() {
         .with_state(clients);
 
     // tracks traffic from specific ip address
-    let ip = "0.0.0.0:3000";
-    let listener = TcpListener::bind(ip).await.unwrap();
-    println!("Server running on http://{}", ip);
+    let ip_addr = "0.0.0.0:3000";
+    let listener = TcpListener::bind(ip_addr).await.unwrap();
+    println!("Server running on http://{}", ip_addr);
 
     // connects the server and the listener
     axum::serve(listener, app).await.unwrap();

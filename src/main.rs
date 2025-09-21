@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{process, sync::Arc};
 
 use axum::{
     Router,
@@ -32,7 +32,13 @@ async fn main() {
 
     // tracks traffic from specific ip address
     let ip_addr = "0.0.0.0:3000";
-    let listener = TcpListener::bind(ip_addr).await.unwrap();
+    let listener = match TcpListener::bind(ip_addr).await {
+        Ok(listener) => listener,
+        Err(e) => {
+            eprintln!("[FATAL] Couldn't bind to hard coded ip_addr '{}' error: {}", ip_addr, e);
+            process::exit(1);
+        },
+    };
     println!("Server running on http://{}", ip_addr);
 
     // connects the server and the listener

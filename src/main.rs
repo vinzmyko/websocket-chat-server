@@ -9,7 +9,6 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use names::Generator;
@@ -110,9 +109,9 @@ async fn handle_connection(
             info!(sender_id = %client_id, sender_name = %user_name, message = %text, "Received message from client");
             let m = format!("{}: {}", user_name, text);
 
-            let msgpack_data = rmp_serde::to_vec(&m).unwrap();
-            let base64_msg = BASE64.encode(&msgpack_data);
-            let msg = Message::Text(base64_msg);
+            // We would use this for the actual game server. For the game client it will know how
+            // to decode the MessagePack data but for this test just do the easiest solution
+            // let msgpack_data = rmp_serde::to_vec(&m).unwrap();
 
             // now we can loop over the clients
             for entry in clients.iter() {
@@ -125,9 +124,9 @@ async fn handle_connection(
                 }
 
                 // need to clone it because we are sending the same data to multiple clients
-                let message = msg.clone();
+                let message = m.clone();
                 // we need to send over the message to the channel
-                match client.sender.send(message) {
+                match client.sender.send(Message::Text(message)) {
                     Ok(_) => {
                         debug!(sending_to_id = %id, sender_id = %client_id, "Sending message to {}", id);
                     }

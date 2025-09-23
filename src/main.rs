@@ -9,6 +9,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use dashmap::DashMap;
 use futures_util::{SinkExt, StreamExt};
 use names::Generator;
@@ -109,7 +110,9 @@ async fn handle_connection(
             info!(sender_id = %client_id, sender_name = %user_name, message = %text, "Received message from client");
             let m = format!("{}: {}", user_name, text);
 
-            let serialised_data = rmp_serde::to_vec(&m).unwrap();
+            let msgpack_data = rmp_serde::to_vec(&m).unwrap();
+            let base64_msg = BASE64.encode(&msgpack_data);
+            let msg = Message::Text(base64_msg);
 
             // now we can loop over the clients
             for entry in clients.iter() {
@@ -122,7 +125,7 @@ async fn handle_connection(
                 }
 
                 // need to clone it because we are sending the same data to multiple clients
-                let message = Message::Binary(serialised_data.clone());
+                let message = msg.clone();
                 // we need to send over the message to the channel
                 match client.sender.send(message) {
                     Ok(_) => {
